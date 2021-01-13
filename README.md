@@ -1,2 +1,2 @@
 # TurbulentDynamo
-Code to investigate the magnetic growth scale in small-scale turbulent dynamo.
+Code to study how magnetic fields evolve in the fluctuation dynamo.
