@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
 
-''' AUTHOR: Neco Kriel
-    
-    EXAMPLE: 
-    plot_turb_data.py 
-        (required)
-            -base_path      $scratch/dyna288_Bk10/Re10
-            -pre_name       dyna288_Bk10
-        (optional)
-            -debug          False
-            -vis_folder     visFiles
-            -xmin           3.2
-'''
-
 ##################################################################
 ## MODULES
 ##################################################################
@@ -21,251 +8,219 @@ import argparse
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+from matplotlib.collections import LineCollection
+from scipy.interpolate import make_interp_spline
+from scipy.optimize import curve_fit
+
+## user defined librariers
+from the_plotting_library import *
+from the_dynamo_library import *
+from the_useful_library import *
+from the_matplotlib_styler import *
+
 
 #################################################################
 ## PREPARE TERMINAL/WORKSPACE/CODE
 #################################################################
-os.system('clear')       # clear terminal window
-plt.close('all')         # close all pre-existing plots
-mpl.style.use('classic') # plot in classic style
+os.system("clear")  # clear terminal window
+plt.close("all")    # close all pre-existing plots
+## work in a non-interactive mode
+mpl.use("Agg")
+plt.ioff()
+
 
 ##################################################################
 ## FUNCTIONS
 ##################################################################
-def str2bool(v):
-    '''
-    FROM:
-        https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
-    '''
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+def fnc_exp_linearised(x, a0, a1):
+    return np.log(a0) + a1 * x
 
-def stringChop(var_string, var_remove):
-    ''' stringChop
-    PURPOSE / OUTPUT:
-        Remove the occurance of the string 'var_remove' at both the start and end of the string 'var_string'.
-    '''
-    if var_string.endswith(var_remove):
-        var_string = var_string[:-len(var_remove)]
-    if var_string.startswith(var_remove):
-        var_string = var_string[len(var_remove):]
-    return var_string
+def fnc_exp(x, a0, a1):
+    return a0 * np.exp(a1 * x)
 
-def createFolder(folder_name):
-    ''' createFolder
-    PURPOSE:
-        Create the folder passed as a filepath to inside the folder.
-    OUTPUT:
-        Commandline output of the success/failure status of creating the folder.
-    '''
-    if not(os.path.exists(folder_name)):
-        os.makedirs(folder_name)
-        print('SUCCESS: \n\tFolder created. \n\t' + folder_name)
-        print(' ')
-    else:
-        print('WARNING: \n\tFolder already exists (folder not created). \n\t' + folder_name)
-        print(' ')
+def sci_notation(number, sig_fig=2):
+    ret_string = "{0:.{1:d}e}".format(number, sig_fig)
+    a, b = ret_string.split("e")
+    return a + r"$\times 10^{" + str(int(b)) + r"}$"
 
-def createFilePath(names):
-    ''' creatFilePath
-    PURPOSE / OUTPUT:
-        Turn an ordered list of names and concatinate them into a filepath.
-    '''
-    return ('/'.join([x for x in names if x != '']))
-
-def loadTurbDat(filepath):
-    ''' loadTurbDat
-    PURPOSE:
-        Load and process the Turb.dat data located in 'filepath'. 
-    OUTPUT:
-        x (time), y data and the name of the y-axis data
-    '''
-    global t_eddy, bool_norm_dat, var_x, var_y
-    ## load data
-    print('Loading data...')
-    first_line = open(filepath).readline().split()
-    len_thresh = len(first_line)
-    ## save x and y data
-    data_x = []
-    data_y = []
-    prev_time = -1
-    with open(filepath) as file_lines:
-        for line in file_lines:
-            data_split = line.split()
-            if len(data_split)  == len_thresh:
-                if (not(data_split[var_x][0] == '#') and not(data_split[var_y][0] == '#')):
-                    cur_time = float(data_split[var_x]) / t_eddy
-                    if cur_time > prev_time:
-                        data_x.append(cur_time) # normalise time-domain
-                        data_y.append(float(data_split[var_y]))
-                        prev_time = cur_time
-    if bool_norm_dat:
-        # y_data = var_y / var_y[1]
-        data_y = [i / data_y[1] for i in data_y]
-    ## return variables
-    return [data_x, data_y, first_line[var_y][4:]]
 
 ##################################################################
 ## INPUT COMMAND LINE ARGUMENTS
 ##################################################################
-global bool_debug_mode, filepath_base
-ap = argparse.ArgumentParser(description='A bunch of input arguments')
+ap = argparse.ArgumentParser(description="a bunch of input arguments")
 ## ------------------- DEFINE OPTIONAL ARGUMENTS
-ap.add_argument('-debug',      type=str2bool,   default=False,      required=False, help='Debug mode', nargs='?', const=True)
-ap.add_argument('-vis_folder', type=str,        default='visFiles', required=False, help='Name of the plot folder')
-ap.add_argument('-file_name',  type=str,        default='Turb.dat', required=False, help='Name of the data file')
-ap.add_argument('-xmin',       type=float,      default=3.2,        required=False, help='Min. x value for analysis')
+ap.add_argument("-vis_folder",  type=str, default="vis_folder", required=False, help="where figures are saved")
 ## ------------------- DEFINE REQUIRED ARGUMENTS
-ap.add_argument('-base_path',  type=str, required=True,  help='Filepath to the base folder')
-ap.add_argument('-pre_name',   type=str, required=True,  help='Name of figures')
+ap.add_argument("-base_path",   type=str, required=True, help="filepath to the base of dat_folders")
+ap.add_argument("-dat_folders", type=str, required=True, help="where Turb.dat is stored", nargs="+")
+ap.add_argument("-dat_labels",  type=str, required=True, help="data labels", nargs="+")
+ap.add_argument("-pre_name",    type=str, required=True, help="figure name")
+ap.add_argument("-t_eddy",      type=float, required=True, help="eddy turnover time := L / (cs * Mach)")
+ap.add_argument("-start_time",  type=int, required=True, help="First file to process", nargs="+")
+ap.add_argument("-end_time",    type=int, required=True, help="end of time range", nargs="+")
 ## ---------------------------- OPEN ARGUMENTS
 args = vars(ap.parse_args())
 ## ---------------------------- SAVE PARAMETERS
-bool_debug_mode = args['debug']     # enable/disable debug mode
-## ---------------------------- FILEPATH PARAMETERS
-filepath_base   = args['base_path']   # home directory
-folder_plot     = args['vis_folder']  # subfolder where animation and plots will be saved
-file_name       = args['file_name']   # data file name
-pre_name        = args['pre_name']    # pre_name of figures
-x_min           = args['xmin']
-## ---------------------------- ADJUST ARGUMENTS
-## remove the trailing '/' from the input filepath
-if filepath_base.endswith('/'):
-    filepath_base = filepath_base[:-1]
-## replace '//' with '/'
-filepath_base   = filepath_base.replace('//', '/')
-## remove '/' from start and end of variables
-folder_plot     = stringChop(folder_plot, '/')
-pre_name        = stringChop(pre_name, '/')
-## ---------------------------- START CODE
-print('Began running the spectra plotting code in the filepath: \n\t' + filepath_base)
-print('Visualising folder: '                                          + folder_plot)
-print('Figure name: '                                                 + pre_name)
-print(' ')
+filepath_base   = args["base_path"]   # home directory
+folders_data    = args["dat_folders"] # list of subfolders where data is stored
+labels_data     = args["dat_labels"]  # list of labels for plots
+folder_plot     = args["vis_folder"]  # subfolder where plots should be saved
+pre_name        = args["pre_name"]    # name of figures
+t_eddy          = args["t_eddy"]      # eddy turnover time
+start_time      = args["start_time"]  # starting processing frame
+end_time        = args["end_time"]    # the last file to process
+
 
 ##################################################################
-## DEFINE PLOTTING VARIABLES
+## GET USER INPUT (choose which variables to plot)
 ##################################################################
-global bool_norm_dat
-global t_eddy, var_x, var_y
-## ------------------- GET USER INPUT
 ## accept input for the y-axis variable
-print('Which variable do you want to plot on the y-axis?')
-print('\tOptions: 6 (E_kin), 8 (rms_Mach), 29 (E_mag)')
-var_y = int(input('\tInput: '))
+print("Which variable do you want to plot on the y-axis?")
+print("\tOptions: 6 (E_kin), 8 (rms_Mach), 29 (E_mag)")
+var_y = int(input("\tInput: "))
 while ((var_y != 6) and (var_y != 8) and (var_y != 29)):
-    print('\tInvalid input. Choose an option from: 6 (E_kin), 8 (rms_Mach), 29 (E_mag)')
-    var_y = int(input('\tInput: '))
-print(' ')
-## constants
-t_eddy           = 5 # L/(2*Mach)
-var_x            = 0
-label_x          = r'$t/t_{\mathregular{eddy}}$'
+    print("\tInvalid input. Choose an option from: 6 (E_kin), 8 (rms_Mach), 29 (E_mag)")
+    var_y = int(input("\tInput: "))
+print(" ")
 ## initialise variables
-var_scale        = ''
-label_y          = r''
-bool_ave         = bool(0) # plot average of data over specified x-range
-bool_regression  = bool(0) # plot regression line for data over specified x-range
-if var_y  == 6:
-    ## kinetic field
-    label_y       = r'$E_{\nu}/E_{\nu 0}$'
-    bool_norm_dat = bool(1)
-    var_scale     = 'log'
-elif var_y  == 8:
+if var_y == 6:
     ## mach number
-    label_y       = r'$\mathcal{M}$'
+    label_y       = r"$E_{\nu}/E_{\nu 0}$"
+    bool_norm_dat = bool(1)
+    var_scale     = "log"
+    var_name      = "E_kin"
+elif var_y == 8:
+    ## mach number
+    label_y       = r"$\mathcal{M}$"
     bool_norm_dat = bool(0)
-    bool_ave      = bool(1)
-    var_scale     = 'linear'
+    var_scale     = "linear"
+    var_name      = "rms_Mach"
 else:
     ## magnetic field
-    label_y       = r'$E_{B}/E_{B 0}$'
+    label_y       = r"$E_{B}$"
     bool_norm_dat = bool(1)
-    bool_regression = bool(1)
-    var_scale     = 'log'
+    var_scale     = "log"
+    var_name      = "E_mag"
+
 
 ##################################################################
 ## INITIALISING VARIABLES
 ##################################################################
+## folders where spectra data files are stored for each simulation
+filepaths_data = []
+for index in range(len(folders_data)): filepaths_data.append(createFilePath([filepath_base, folders_data[index]]))
+## create folder where the figures will be saved
 filepath_plot = createFilePath([filepath_base, folder_plot])
-## create folder where the figure will be saved
 createFolder(filepath_plot)
-## open figure
-fig = plt.figure(figsize = (10, 7), dpi = 100)
+## print information to screen
+print("Base filepath: ".ljust(20) + filepath_base)
+for index in range(len(filepaths_data)): 
+    print("Data folder {:d}: ".format(index).ljust(20) + filepaths_data[index])
+print("Figure folder: ".ljust(20) + filepath_plot)
+print("Figure name: ".ljust(20) + pre_name)
+print(" ")
+
 
 ##################################################################
-## LOADING DATA
+## LOAD + APPEND DATA
 ##################################################################
-data_x, data_y, var_name = loadTurbDat(filepath_base + '/' + file_name)
-## save analysis data
-print('Saving analysis data...')
-index_min = min(enumerate(data_x), key = lambda x: abs(x_min - x[1]))[0]
-fit_x     = list(map(float, data_x[index_min:]))
-fit_y     = list(map(float, data_y[index_min:]))
+## initialise datasets
+data_xs = []
+data_ys = []
+## loop over each simulation folder
+print("Loading datasets...")
+for index in range(len(filepaths_data)):
+    print("\t> " + filepaths_data[index])
+    ## loading data
+    data_x, data_y = loadTurbData(filepaths_data[index], var_y, t_eddy)
+    ## append data
+    data_xs.append(data_x)
+    data_ys.append(data_y)
+print(" ")
+
 
 ##################################################################
-## PLOTTING DATA
+## PLOT TIME EVOLUTION
 ##################################################################
-print('Plotting data...')
-plt.plot(data_x, data_y, 'k')
-
-##################################################################
-## ADD REGRESSION / AVERAGING
-##################################################################
-## plot regression analysis
-print('Plotting annotations...')
-if (bool_regression and (max(data_x) > x_min)):
-    log_y = np.log(fit_y)
-    m, c  = np.polyfit(fit_x, log_y, 1)    # fit log(y) = m*log(x) + c
-    fit_y = np.exp([m*x + c for x in fit_x]) # calculate the fitted values of y 
-    plt.annotate(r"$m = %0.1f$"%m,
-            xy=(0.75, 0.23),
-            fontsize=20, color='black', 
-            ha="left", va='top', xycoords='axes fraction')
-    plt.annotate(r"$c = %0.1f$"%c,
-            xy=(0.75, 0.15),
-            fontsize=20, color='black', 
-            ha="left", va='top', xycoords='axes fraction')
-## plot average analysis
-if (bool_ave and (max(data_x) > x_min)):
-    var_dt    = np.diff(fit_x)
-    var_ave_y = [(prev+cur)/2 for prev, cur in zip(fit_y[:-1], fit_y[1:])]
-    ave_y     = sum(var_ave_y * var_dt) / (data_x[-1] - x_min)
-    fit_y     = np.repeat(ave_y, len(fit_y))
-    plt.annotate(r"$\langle %s \rangle \pm 1\sigma = $"%label_y.replace('$', '') +
-                r"$%0.2f$"%ave_y + 
-                r" $\pm$ " +
-                r"$%0.1g$"%np.sqrt(np.var(data_y)),
-            xy=(0.5, 0.25),
-            fontsize = 20, color = 'black', 
-            ha = "left", va = 'top', xycoords='axes fraction')
-
-##################################################################
-## LABEL and ADJUST PLOT
-##################################################################
-print('Labelling plot...')
-## major grid
-plt.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.35)
-## minor grid
-plt.grid(which='minor', linestyle='--', linewidth='0.5', color='black', alpha=0.2)
+## create figure
+fig, ax = plt.subplots(constrained_layout=True)
+## loop over each simulation
+print("Plotting time evaluations...")
+for data_x, data_y, index in zip(data_xs, data_ys, range(len(filepaths_data))):
+    ## fit exponential to magnetic energy evolution in kinematic range
+    tmp_label = ""
+    if (var_y == 29):
+        ## find indices that bound the kinematic range
+        file_indexes_in_time_range = [ tmp_index for tmp_index, tmp_time in enumerate(data_x) if (tmp_time >= start_time[index]) and (tmp_time <= end_time[index]) ]
+        index_E_low  = min(file_indexes_in_time_range)
+        index_E_high = max(file_indexes_in_time_range)
+        ## interpolate data
+        interp_spline = make_interp_spline(data_x[index_E_low:index_E_high], data_y[index_E_low:index_E_high])
+        interp_data_x = np.linspace(data_x[index_E_low], data_x[index_E_high], 10**2)
+        interp_data_y = interp_spline(interp_data_x)
+        ## fit exponential function in log-linear domain
+        fit_params, _ = curve_fit(fnc_exp_linearised, interp_data_x, np.log(interp_data_y))
+        ## plot fitted lines
+        fit_data = np.linspace(data_x[index_E_low], data_x[index_E_high], 10**3)
+        tmp_line = LineCollection([np.column_stack( (fit_data, fnc_exp(fit_data, *fit_params)) )],
+            colors="k", ls=(0, (5, 2)), linewidth=1.5, zorder=10)
+        ax.add_collection(tmp_line, autolim=False) # don"t scale axes to fit the line
+        tmp_label = ", "+sci_notation(fit_params[0])+r" $\exp(${:.2f}t)".format(fit_params[1])
+    ## plot time evolving data
+    ax.plot(data_x, data_y,  color=sns.color_palette("PuBu", n_colors=len(filepaths_data))[index], 
+        linewidth=2.5, label=labels_data[index]+tmp_label)
 ## label plot
-plt.xlabel(label_x, fontsize = 20)
-plt.ylabel(label_y, fontsize = 20)
+print("Labelling plot...")
+## major grid
+ax.grid(which="major", linestyle="-", linewidth="0.5", color="black", alpha=0.35)
+## add legend
+ax.legend(frameon=True, loc="lower right", facecolor="white", framealpha=0.5, fontsize=18)
+# ## label plot
+ax.set_xlabel(r"$t / t_\mathrm{eddy}$", fontsize=22)
+ax.set_ylabel(label_y, fontsize=22)
 ## scale y-axis
-plt.yscale(var_scale)
+ax.set_yscale(var_scale)
+## save image
+print("Saving the figure...")
+name_fig = filepath_plot + "/" + pre_name + "_" + var_name + ".pdf"
+plt.savefig(name_fig)
+plt.close()
+print("Figure saved: " + name_fig)
+print(" ")
+
 
 ##################################################################
-## SAVE IMAGE
+## PLOT HISTOGRAM
 ##################################################################
-print('Saving the figure...')
-name_fig = createFilePath([filepath_plot, (pre_name + '_turb_' + var_name + '.png')])
-plt.savefig(name_fig)
-print('Figure saved: ' + name_fig)
+if (var_y == 8):
+    ## create figure
+    fig, ax = plt.subplots(constrained_layout=True)
+    ## loop through datasets
+    print("Plotting frequnecy (density) of Mach...")
+    for data_x, data_y, index in zip(data_xs, data_ys, range(len(filepaths_data))):
+        if (max(data_x) > 7.5):
+            ## find the indices corresponding with the start and end of kinematic/interested range
+            index_start = min(range(len(data_x)), key=lambda i: abs(data_x[i]-start_time[index]))
+            if (max(data_x) > 20): index_end = min(range(len(data_x)), key=lambda i: abs(data_x[i]-end_time[index]))
+            else: index_end = -1
+            ## plot PDF of Mach number in 
+            plotPDF(ax, data_y[index_start:index_end], sim_label=labels_data[index], num_cols=len(filepaths_data), col_index=index)
+    ## label plot
+    print("Labelling plot...")
+    ## add legend
+    ax.legend(loc="upper right", facecolor="white", framealpha=1, fontsize=20)
+    ## label plot
+    ax.set_xlabel(r"$\mathcal{M}$", fontsize=22)
+    ax.set_ylabel(r"$p(\mathcal{M})$", fontsize=22)
+    ## save image
+    print("Saving the figure...")
+    name_fig = filepath_plot + "/" + pre_name + "_" + var_name + "_hist.pdf"
+    plt.savefig(name_fig)
+    plt.close()
+    print("Figure saved: " + name_fig)
+    print(" ")
+
 
 ## END OF PROGRAM

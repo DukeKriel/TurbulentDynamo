@@ -6,336 +6,210 @@
 import os
 import argparse
 import numpy as np
+import matplotlib as mpl
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import seaborn as sns
+import seaborn as sns # for colors: https://medium.com/@morganjonesartist/color-guide-to-seaborn-palettes-da849406d44f
 
-from matplotlib.ticker import FormatStrFormatter
-from matplotlib.lines import Line2D
-from statistics import stdev
+## always import the c-version of pickle
+try: import cPickle as pickle
+except ModuleNotFoundError: import pickle
 
-from matplotlibrc import *
-rcParams['xtick.top'] = False
-rcParams['xtick.minor.pad'] = '8'
-rcParams['xtick.major.pad'] = '8'
-rcParams['ytick.minor.pad'] = '8'
-rcParams['ytick.major.pad'] = '8'
+from scipy.optimize import curve_fit, root_scalar
 
-##################################################################
-## PREPARE TERMINAL/WORKSPACE/CODE
-#################################################################
-os.system('clear') # clear terminal window
-plt.close('all')   # close all pre-existing plots
+## user defined libraries
+from the_dynamo_library import *
+from the_useful_library import *
+from the_matplotlib_styler import *
+
 
 ##################################################################
 ## FUNCTIONS
 ##################################################################
-def str2bool(v):
-    '''
-    FROM:
-        https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
-    '''
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+def fnc_linear(x, a0, a1):
+    return a0 * x + a1
 
-def stringChop(var_string, var_remove):
-    ''' stringChop
-    PURPOSE / OUTPUT:
-        Remove the occurance of the string 'var_remove' at both the start and end of the string 'var_string'.
-    '''
-    if var_string.endswith(var_remove):
-        var_string = var_string[:-len(var_remove)]
-    if var_string.startswith(var_remove):
-        var_string = var_string[len(var_remove):]
-    return var_string
-
-def createFolder(folder_name):
-    ''' createFolder
-    PURPOSE:
-        Create the folder passed as a filepath to inside the folder.
-    OUTPUT:
-        Commandline output of the success/failure status of creating the folder.
-    '''
-    if not(os.path.exists(folder_name)):
-        os.makedirs(folder_name)
-        print('SUCCESS: \n\tFolder created. \n\t' + folder_name)
-        print(' ')
-    else:
-        print('WARNING: \n\tFolder already exists (folder not created). \n\t' + folder_name)
-        print(' ')
-
-def createFilePath(names):
-    ''' creatFilePath
-    PURPOSE / OUTPUT:
-        Turn an ordered list of names and concatinate them into a filepath.
-    '''
-    return ('/'.join([x for x in names if x != '']))
-
-def meetsMagCondition(element):
-    global bool_debug_mode, file_end, file_start
-    ## accept files that look like: *Turb_hdf5_plt_cnt_*mags.dat
-    if (element.__contains__('Turb_hdf5_plt_cnt_') and element.endswith('mags.dat')):
-        ## check that the file meets the minimum file number requirement
-        bool_domain_upper = (int(element.split('_')[-3]) >= file_start)
-        if bool_debug_mode:
-            ## return the first 5 files
-            return bool(bool_domain_upper and (int(element.split('_')[-3]) <= 5))
-        elif file_end != np.Inf:
-            ## return the files in the domain [file_start, file_end]
-            return bool(bool_domain_upper and (int(element.split('_')[-3]) <= file_end))
-        else:
-            ## return every file with a number greater than file_start
-            return bool(bool_domain_upper)
-    return False
-
-def loadData(directory):
-    filedata = open(directory).readlines() # load in data
-    data     = np.array([x.strip().split() for x in filedata[6:]]) # store all data. index: data[row, col]
-    data_x   = list(map(float, data[:, 1]))  # variable: wave number (k)
-    data_y   = list(map(float, data[:, 15])) # variable: power spectrum
-    return data_x, data_y
-
-def saveData(filepath_data):
-    mag_filenames = list(filter(meetsMagCondition, sorted(os.listdir(filepath_data))))
-    num_time_points = len(mag_filenames)
-    print('\t There are ' + str(num_time_points) + ' files')
-    k_peak = []
-    ## analyse all time points
-    for file_index in range(num_time_points):
-        if ((100 * file_index/num_time_points) % 20 < 0.25):
-            print('\t Loading data... %0.3f%% complete'%(100 * file_index/num_time_points))
-        ## load data
-        filename = createFilePath([filepath_data, mag_filenames[file_index]])
-        ## magnetic power spectrum
-        data_x, data_y = loadData(filename)
-        ## calculate the peak of the spectra
-        k_peak.append(data_x[data_y.index(max(data_y))])
-    ## return data
-    return k_peak
-
-def calcListAve(lst): 
-    return sum(lst) / len(lst)
-
-def power_law(x, a, b):
-    return a * x**b
-
-def Pm_axis(Pm):
-    return [str(int(round(x, 0))) for x in Pm]
+def plotDependance(ax, labels_data, list_x, list_y, str_x, str_y, str_color, bool_fit_linear=False):
+    ## loop through simulation datasets
+    points_x = []
+    points_y = []
+    print("\t Plotting data...")
+    for index in range(len(labels_data)):
+        print("\t\t> Plotting: " + labels_data[index])
+        ## plot k peak: mean +/- std
+        ax.errorbar(np.mean(list_x[index]), np.mean(list_y[index]),
+            xerr=np.percentile(list_x[index], 16), yerr=np.percentile(list_y[index], 84),
+            fmt="o", markersize=12, elinewidth=1.5, linestyle="None", color=sns.color_palette(str_color, n_colors=len(filepaths_data))[index], 
+            label=labels_data[index], zorder=3)
+        points_x.append(np.mean(list_x[index]))
+        points_y.append(np.mean(list_y[index]))
+    if bool_fit_linear:
+        points_x = np.array(points_x)
+        points_y = np.array(points_y)
+        fit_params, _ = curve_fit(fnc_linear, points_x, points_y)
+        ax.plot(points_x, fnc_linear(points_x, *fit_params), '--k', linewidth=2, zorder=5)
+        a0, a1 = fit_params
+        if a1 > 0: str_sep = r"$+$"
+        else: str_sep = r"$-$"
+        ax.text(0.05, 0.95, r"{0:.2f}$x$ {1} {2:.2f}".format(a0, str_sep, abs(a1)), fontsize=22, transform=ax.transAxes, ha="left", va="top")
+    ## label plot
+    print("\t Labelling plot...")
+    ax.set_xlabel(r"$\rm %s$"%(str_x), fontsize=22)
+    ax.set_ylabel(r"$k_{\rm %s}(\rm %s)$"%(str_y, str_x), fontsize=22, color="black")
+    ## add legend
+    ax.legend(frameon=True, loc="upper right", facecolor="white", framealpha=0.5, fontsize=18)
 
 
-## from: https://stackoverflow.com/questions/18704353/correcting-matplotlib-colorbar-ticks
-def cmap_discretize(cmap, N):
-    if type(cmap) == str:
-        cmap = plt.get_cmap(cmap)
-    colors_i = np.concatenate((np.linspace(0, 1., N), (0.,0.,0.,0.)))
-    colors_rgba = cmap(colors_i)
-    indices = np.linspace(0, 1., N+1)
-    cdict = {}
-    for ki,key in enumerate(('red','green','blue')):
-        cdict[key] = [ (indices[i], colors_rgba[i-1,ki], colors_rgba[i,ki]) for i in range(N+1) ]
-    # Return colormap object.
-    return mcolors.LinearSegmentedColormap(cmap.name + "_%d"%N, cdict, 1024)
+##################################################################
+## PREPARE TERMINAL/WORKSPACE/CODE
+#################################################################
+os.system("clear")  # clear terminal window
+plt.close("all")    # close all pre-existing plots
+## work in a non-interactive mode
+mpl.use("Agg")
+plt.ioff()
 
-def colorbar_index(ncolors, cmap, nlabels, label_title):
-    cmap = cmap_discretize(cmap, ncolors)
-    mappable = cm.ScalarMappable(cmap=cmap)
-    mappable.set_array([])
-    mappable.set_clim(-0.5, ncolors+0.5)
-    colorbar = plt.colorbar(mappable)
-    colorbar.set_label(label_title, rotation=0, labelpad=5, fontsize=22)
-    colorbar.set_ticks(np.linspace(0, ncolors, ncolors))
-    colorbar.set_ticklabels(nlabels)
-    colorbar.ax.minorticks_off()
 
 ##################################################################
 ## INPUT COMMAND LINE ARGUMENTS
 ##################################################################
-global file_end, bool_debug_mode, filepath_base, file_start
-ap = argparse.ArgumentParser(description='A bunch of input arguments')
+ap = argparse.ArgumentParser(description="A bunch of input arguments")
 ## ------------------- DEFINE OPTIONAL ARGUMENTS
-ap.add_argument('-debug', type=str2bool, default=False,        required=False, help='Debug mode', nargs='?', const=True)
-ap.add_argument('-vis_folder', type=str, default='visFiles',   required=False, help='Name of the plot folder')
-ap.add_argument('-file_start', type=int, default=150,          required=False, help='First file to process')
-ap.add_argument('-file_end',   type=int, default=np.Inf,       required=False, help='Last file to process')
+ap.add_argument("-fit_linear",  type=str2bool, default=False, required=False, help="fit linear line to data", nargs="?", const=True)
+ap.add_argument("-vis_folder",  type=str, default="vis_folder", required=False, help="where figures are saved")
+ap.add_argument("-sub_folders", type=str, default="", required=False, help="where spectras are stored in simulation folder")
 ## ------------------- DEFINE REQUIRED ARGUMENTS
-ap.add_argument('-base_path',   type=str, required=True, help='Filepath to the base folder')
-ap.add_argument('-dat_folders', type=str, required=True, help='List of folders with data', nargs='+')
-ap.add_argument('-pre_name',    type=str, required=True, help='Name of figures')
+ap.add_argument("-base_path",   type=str, required=True, help="filepath to the base of dat_folders")
+ap.add_argument("-dat_folders", type=str, required=True, help="where Turb.dat is stored", nargs="+")
+ap.add_argument("-dat_labels",  type=str, required=True, help="data labels", nargs="+")
+ap.add_argument("-pre_name",    type=str, required=True, help="figure name")
+ap.add_argument("-start_time",  type=int, required=True, help="First file to process", nargs="+")
+ap.add_argument("-end_time",    type=int, required=True, help="end of time range", nargs="+")
 ## ---------------------------- OPEN ARGUMENTS
 args = vars(ap.parse_args())
 ## ---------------------------- SAVE PARAMETERS
-bool_debug_mode = args['debug']       # enable/disable debug mode
-file_start      = args['file_start']  # starting processing frame
-file_end        = args['file_end']    # the last file to process
+bool_fit_linear = args["fit_linear"] # fit linear line to data
+start_time      = args["start_time"] # starting processing frame
+end_time        = args["end_time"]   # the last file to process
 ## ---------------------------- SAVE FILEPATH PARAMETERS
-filepath_base = args['base_path']   # home directory
-folders_data  = args['dat_folders'] # list of subfolders where each simulation's data is stored
-folder_vis    = args['vis_folder']  # subfolder where animation and plots will be saved
-pre_name      = args['pre_name']    # name of figures
-## ---------------------------- ADJUST ARGUMENTS
-## remove the trailing '/' from the input filepath and plot folder
-if filepath_base.endswith('/'):
-    filepath_base = filepath_base[:-1]
-## replace any '//' with '/'
-filepath_base = filepath_base.replace('//', '/')
-## remove '/' from variable names
-folder_vis    = stringChop(folder_vis, '/')
-pre_name      = stringChop(pre_name, '/')
-for i in range(len(folders_data)): 
-    folders_data[i] = stringChop(folders_data[i], '/')
-## ---------------------------- START CODE
-## folder where plots will be saved
-filepath_plot = createFilePath([filepath_base, folder_vis, 'plotSpectra']).replace('//', '/')
-## create folder where plots are saved
+filepath_base = args["base_path"]   # home directory
+folders_data  = args["dat_folders"] # list of subfolders where each simulation"s data is stored
+folders_sub   = args["sub_folders"] # where spectras are stored in simulation folder
+labels_data   = args["dat_labels"]  # list of labels for plots
+folder_vis    = args["vis_folder"]  # subfolder where animation and plots will be saved
+pre_name      = args["pre_name"]    # name of figures
+
+
+##################################################################
+## INITIALISING VARIABLES
+##################################################################
+## folder where dependance plots will be saved
+filepath_plot = createFilePath([filepath_base, folder_vis])
 createFolder(filepath_plot)
-## create the filepaths to data
+## folders where spectra data is
 filepaths_data = []
-for i in range(len(folders_data)):
-    filepaths_data.append(createFilePath([filepath_base, folders_data[i]]).replace('//', '/'))
+for folder_data in folders_data:
+    filepaths_data.append(createFilePath([filepath_base, folder_data, folders_sub]))
 ## print filepath information to the console
-print('Base filepath:  \t'                  + filepath_base)
-for i in range(len(filepaths_data)): 
-    print('Data folder  ' + str(i) + ': \t' + filepaths_data[i])
-print('Figure folder:  \t'                  + filepath_plot)
-print('Figure name:  \t\t'                  + pre_name)
-print(' ')
+print("Base filepath: ".ljust(20) + filepath_base)
+for index in range(len(filepaths_data)): 
+    print("Data folder {:d}: ".format(index).ljust(20)  + filepaths_data[index])
+print("Figure folder: ".ljust(20) + filepath_plot)
+print("Figure name: ".ljust(20)   + pre_name)
+print(" ")
+
 
 ##################################################################
-## USER VARIABLES
+## LOAD & APPEND DATA
 ##################################################################
-global t_eddy
-t_eddy = 10 # number of spectra files per eddy turnover # TODO: input?
-## set the figure's axis limits
-global k_0
-k_0 = 2
+## initialise list of spectra objects
+spectra_objs = []
+print("Loading spectra objects...")
+for filepath_data, index in zip(filepaths_data, range(len(filepaths_data))):
+    print("\t> Loading from: " + filepath_data)
+    ## create the file"s name
+    filename = createFilePath([filepath_data, "spectra_obj.pkl"])
+    ## if the file exists, then read it in
+    if os.path.isfile(filename):
+        with open(filename, "rb") as input:
+            tmp_obj = pickle.load(input)
+    else: raise Exception("\t> No spectra object found.")
+    ## append object
+    spectra_objs.append(tmp_obj)
+print(" ")
+
+
+##################################################################
+## EXTRACT SCALES FROM SPECTRA OBJECTS
+##################################################################
+list_k_nu    = []
+list_k_nu_p  = []
+list_k_max   = []
+list_k_eta   = []
+list_k_eta_p = []
+list_k_cor   = []
+for spectra_obj in spectra_objs:
+    ## load simulation information
+    sim_label = spectra_obj.sim_label
+    sim_time  = spectra_obj.vel_sim_time
+    ## find indices that bound the kinematic range
+    sub_index_start = min(tmp_index for tmp_index, tmp_time in enumerate(sim_time) if (tmp_time >= start_time[index]) and (tmp_time <= end_time[index]))
+    sub_index_end   = max(tmp_index for tmp_index, tmp_time in enumerate(sim_time) if (tmp_time >= start_time[index]) and (tmp_time <= end_time[index]))
+    ## load important scales
+    k_nu    = spectra_obj.k_nu[sub_index_start:sub_index_end]
+    k_nu_p  = spectra_obj.k_nu_p[sub_index_start:sub_index_end]
+    k_max   = spectra_obj.k_max[sub_index_start:sub_index_end]
+    k_eta   = spectra_obj.k_eta[sub_index_start:sub_index_end]
+    k_eta_p = spectra_obj.k_eta_p[sub_index_start:sub_index_end]
+    ## load spectra data during kinematic regime
+    mag_k     = spectra_obj.mag_k[sub_index_start:sub_index_end]
+    mag_power = spectra_obj.mag_power[sub_index_start:sub_index_end]
+    ## calculate correlation scale during kinematic regime
+    k_cor = []
+    for k, power in zip(mag_k, mag_power):
+        k_cor.append(sum([x*y for x,y in zip(k,power)]) / sum(power))
+    ## append data
+    list_k_nu.append(k_nu)
+    list_k_nu_p.append(k_nu_p)
+    list_k_max.append(k_max)
+    list_k_eta.append(k_eta)
+    list_k_eta_p.append(k_eta_p)
+    list_k_cor.append(k_cor)
+
+
+# ##################################################################
+# ## PLOT SCALE DEPENDANCE
+# ##################################################################
 ## create figure
-fig, ax1 = plt.subplots(constrained_layout=True)
-ax2 = ax1.twiny()
-
-##################################################################
-## LOAD & PLOT DATA
-##################################################################
-list_k_peak_norm_ave = []
-list_k_domain_norm = []
-list_k_peak_norm = []
-list_Pm = []
-list_k_eta = []
-list_k_nu = []
-list_res = []
-## load data for each filepath
-for i in range(len(filepaths_data)):
-    print('Loading data from: ' + filepaths_data[i])
-    ## load the average and standard deviation data
-    k_peak = saveData(filepaths_data[i])
-    ## read the simulation parameter values from the flash.par file
-    nu = 0
-    eta = 0
-    iproc = 0
-    with open(createFilePath([filepaths_data[i], 'flash.par'])) as file_content:
-        for line in file_content:
-            if len(line.split()) > 1:
-                if line.split()[0] == 'diff_visc_nu':
-                    nu = float(line.split()[2])
-                if line.split()[0] == 'resistivity':
-                    eta = float(line.split()[2])
-                if line.split()[0] == 'iProcs':
-                    iproc = float(line.split()[2])
-    if (nu == 0) or (eta == 0):
-        raise Exception('nu and eta weren''t found in the FLASH.par file\n.')
-    ## calculate simulation characteristics
-    global Re
-    Re = round(0.1 / (2 * nu), 2)
-    Pm = round(nu / eta, 2)
-    Rm = round(Re * Pm, 2)
-    list_Pm.append(Pm) # append for second axis
-    ## calculate scales in the simulation
-    list_k_eta.append(Re**(1/4) * (Re*Pm)**(1/2) * k_0)
-    list_k_nu.append(Re**(3/4) * k_0)
-    list_res.append(36 * iproc)
-    ## append data for fitting power law
-    tmp_k_peak_norm = [x/list_k_nu[i] for x in k_peak]
-    list_k_peak_norm.append(tmp_k_peak_norm)
-    list_k_peak_norm_ave.append(calcListAve(tmp_k_peak_norm))
-    list_k_domain_norm.append(list_k_eta[i] / list_k_nu[i])
-    print(' ')
-
-## create unique set of colours
-list_k_col = list_k_eta
-list_round_k_col  = [5 * round(x/5) for x in list_k_col] # find closest multiple of 5
-list_unique_k_col = sorted(list(set(list_round_k_col)))
-len_unique_k_col  = len(list_unique_k_col)
-## define dictionary of markers
-list_k_marker = list_k_nu
-list_round_k_marker  = [round(x, 0) for x in list_k_marker]
-list_unique_k_marker = sorted(list(set(list_round_k_marker)))
-list_marker_cycle    = dict([(4, 'o'), (11, 's'), (40, '^')])
-
-## plot data for each filepath
-print('Plotting data...')
-for i in range(len(filepaths_data)):
-    print('\t Plotting: ' + filepaths_data[i])
-    ## find which color the sim corresponds with
-    tmp_col_index = list_unique_k_col.index(list_round_k_col[i])
-    tmp_col = sns.color_palette('Blues', n_colors=len_unique_k_col)[tmp_col_index]
-    ## choose marker
-    tmp_marker = list_marker_cycle[round(list_k_nu[i], 0)]
-    ## plot mean +/- std
-    ax1.errorbar(list_k_domain_norm[i], list_k_peak_norm_ave[i], yerr=stdev(list_k_peak_norm[i]), 
-        color=tmp_col, fmt=tmp_marker,
-        markersize=10, linestyle='None', zorder=1)
-print(' ')
-
-##################################################################
-## FIT POWER LAW
-##################################################################
-# m, b = np.polyfit(  np.array([np.array(tmp_x) for tmp_x in list_k_domain_norm]), 
-#                     np.array([np.array(tmp_y) for tmp_y in list_k_peak_norm_ave]), 1)
-# data = np.linspace(min(list_k_domain_norm), max(list_k_domain_norm), 100)
-# ax1.plot(data, m*data + b, 'r--')
-# ax1.text(0.95, 0.05, r"$%0.2f(k_\eta / k_\nu) %0.2f$"%(m, b), color='r', 
-#     transform=ax1.transAxes, horizontalalignment='right', verticalalignment='bottom', fontsize=20)
-
-##################################################################
-## LABEL PLOT
-##################################################################
-## add colorbar
-cmap = plt.get_cmap('Blues')
-colorbar_index(ncolors=len_unique_k_col, cmap=cmap, nlabels=list_unique_k_col, label_title=r'$k_\eta$')
-## add legend
-list_handles = []
-for i in range(len(list_unique_k_marker)):
-    list_handles.append(Line2D([0], [0], color='k', 
-        marker=list_marker_cycle[round(list_unique_k_marker[i], 0)],
-        linestyle='None',
-        label=r"$k_\nu =$ " + str(int(round(list_unique_k_marker[i], 0)))) )
-plt.legend(handles=list_handles, handletextpad=0.1, fontsize=18)
-## label bottom axis (k_eta / k_nu)
-ax1.set_xlabel(r'$k_\eta / k_\nu$', fontsize=22)
-ax1.set_ylabel(r'$k_\mathrm{p} / k_\nu$', fontsize=22)
-## label top axis (Pm)
-list_unique_Pm = sorted(list(set(list_Pm)))
-axis_Pm_tick_locs = [round(x**(1/2), 0) for x in list_unique_Pm]
-ax2.set_xlim(ax1.get_xlim())
-ax2.set_xticks(axis_Pm_tick_locs)
-ax2.set_xticklabels(Pm_axis(list_unique_Pm))
-ax2.set_xlabel(r"Pm", fontsize=22)
-ax2.set_xticks([], minor=True)
-
-##################################################################
-## SAVE FIGURE
-##################################################################
-print('Saving figure...')
-fig_name = createFilePath([filepath_plot, pre_name]) + '_scale_dependance.pdf'
+fig, axs = plt.subplots(2, 2, figsize=(12,8), constrained_layout=True)
+## plot histograms
+plotDependance(axs[0,0], labels_data, list_k_eta,   list_k_max, "k_\eta", "max", "Blues", bool_fit_linear)
+plotDependance(axs[1,0], labels_data, list_k_eta,   list_k_cor, "k_\eta", "cor", "Blues", bool_fit_linear)
+plotDependance(axs[0,1], labels_data, list_k_eta_p, list_k_max, "k_\eta^\prime", "max", "Blues", bool_fit_linear)
+plotDependance(axs[1,1], labels_data, list_k_eta_p, list_k_cor, "k_\eta^\prime", "cor", "Blues", bool_fit_linear)
+## save image
+print("Saving figure...")
+fig_name = createFilePath([filepath_plot, pre_name]) + "_k_max_depend_k_eta.pdf"
 plt.savefig(fig_name)
 plt.close()
-print('Figure saved: ' + fig_name)
-print(' ')
+print("Figure saved: " + fig_name)
+print(" ")
+
+## create figure
+fig, axs = plt.subplots(2, 2, figsize=(12,8), constrained_layout=True)
+## plot histograms
+plotDependance(axs[0,0], labels_data, list_k_nu,   list_k_max, "k_\nu", "max", "Oranges", bool_fit_linear)
+plotDependance(axs[1,0], labels_data, list_k_nu,   list_k_cor, "k_\nu", "cor", "Oranges", bool_fit_linear)
+plotDependance(axs[0,1], labels_data, list_k_nu_p, list_k_max, "k_\nu^{\prime}", "max", "Oranges", bool_fit_linear)
+plotDependance(axs[1,1], labels_data, list_k_nu_p, list_k_cor, "k_\nu^{\prime}", "cor", "Oranges", bool_fit_linear)
+## save image
+print("Saving figure...")
+fig_name = createFilePath([filepath_plot, pre_name]) + "_k_max_depend_nu.pdf"
+plt.savefig(fig_name)
+plt.close()
+print("Figure saved: " + fig_name)
+print(" ")
+
 
 ## END OF PROGRAM
