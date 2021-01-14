@@ -52,14 +52,14 @@ def sci_notation(number, sig_fig=2):
 ap = argparse.ArgumentParser(description="a bunch of input arguments")
 ## ------------------- DEFINE OPTIONAL ARGUMENTS
 ap.add_argument("-vis_folder",  type=str, default="vis_folder", required=False, help="where figures are saved")
+ap.add_argument("-dat_labels",  type=str, default=None,   required=False, help="data labels", nargs="+")
+ap.add_argument("-start_time",  type=int, default=[1],      required=False, help="First file to process", nargs="+")
+ap.add_argument("-end_time",    type=int, default=[np.inf], required=False, help="end of time range", nargs="+")
 ## ------------------- DEFINE REQUIRED ARGUMENTS
 ap.add_argument("-base_path",   type=str, required=True, help="filepath to the base of dat_folders")
 ap.add_argument("-dat_folders", type=str, required=True, help="where Turb.dat is stored", nargs="+")
-ap.add_argument("-dat_labels",  type=str, required=True, help="data labels", nargs="+")
 ap.add_argument("-pre_name",    type=str, required=True, help="figure name")
 ap.add_argument("-t_eddy",      type=float, required=True, help="eddy turnover time := L / (cs * Mach)")
-ap.add_argument("-start_time",  type=int, required=True, help="First file to process", nargs="+")
-ap.add_argument("-end_time",    type=int, required=True, help="end of time range", nargs="+")
 ## ---------------------------- OPEN ARGUMENTS
 args = vars(ap.parse_args())
 ## ---------------------------- SAVE PARAMETERS
@@ -108,9 +108,15 @@ else:
 ##################################################################
 ## INITIALISING VARIABLES
 ##################################################################
+## if a time-range isn't specified for one of the simulations, then use the default time-range
+if len(start_time) < len(folders_data): start_time.extend( [1] * (len(folders_data) - len(start_time)) )
+if len(end_time) < len(folders_data): end_time.extend( [np.inf] * (len(folders_data) - len(end_time)) )
+## if data labels weren't given, then use the data folders' names
+if labels_data is None: labels_data = folders_data
 ## folders where spectra data files are stored for each simulation
 filepaths_data = []
-for index in range(len(folders_data)): filepaths_data.append(createFilePath([filepath_base, folders_data[index]]))
+for index in range(len(folders_data)):
+    filepaths_data.append(createFilePath([filepath_base, folders_data[index]]))
 ## create folder where the figures will be saved
 filepath_plot = createFilePath([filepath_base, folder_plot])
 createFolder(filepath_plot)
@@ -149,7 +155,7 @@ fig, ax = plt.subplots(constrained_layout=True)
 ## loop over each simulation
 print("Plotting time evaluations...")
 for data_x, data_y, index in zip(data_xs, data_ys, range(len(filepaths_data))):
-    ## fit exponential to magnetic energy evolution in kinematic range
+    ## fit exponential to magnetic energy evolution in the kinematic range
     tmp_label = ""
     if (var_y == 29):
         ## find indices that bound the kinematic range

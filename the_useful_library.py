@@ -91,4 +91,8 @@ def normaliseData(vals):
     return vals / vals.max()
 
 
+def getCommonElements(list1, list2):
+    return list(set(list1) & set(list2))
+
+
 ## END OF LIBRARY

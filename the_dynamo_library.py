@@ -5,6 +5,7 @@
 ##################################################################
 import os
 import h5py
+import warnings # useful: https://queirozf.com/entries/suppressing-ignoring-warnings-in-python-reference-and-examples
 
 ## always import the c-version of pickle
 try: import cPickle as pickle
@@ -15,7 +16,6 @@ from scipy.optimize import curve_fit, root_scalar
 
 ## user defined libraries
 from the_useful_library import *
-
 
 ##################################################################
 ## FUNCTIONS
@@ -138,12 +138,11 @@ def saveSpectraObject(obj, filepath_file):
 
 def analyseVelSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
     ## initialise list of kinetic scales for the simulation
-    vel_sim_time  = [] # simulation time points
+    vel_sim_times  = [] # simulation time points
     vel_k     = [] # spectra k values
     vel_power = [] # power spectra
     fit_vel_k = [] # fitted spectra k values
     fit_vel_power   = [] # fitted power spectra
-    fit_vel_success = [] # spectra files that were fitted
     fit_vel_failed  = [] # spectra files that couldn't be fitted
     k_nu      = [] # measured k_nu from fitted spectra
     k_nu_p    = [] # measured k_nu_p from fitted spectra
@@ -152,8 +151,6 @@ def analyseVelSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
     ## loop over spectra files in domain
     print("\t\t> There are " + str(len(vel_filenames)) + " velocity spectra files")
     for vel_filename, sub_index in zip(vel_filenames, tqdm(range(len(vel_filenames)), disable=bool_hide_progress)):
-        ## save the simulation time
-        vel_sim_time.append( float(vel_filename.split("_")[-3]) / plots_per_eddy )
         ## load data
         k, power = loadSpectraData(createFilePath([filepath_data, vel_filename]))
         vel_k.append(k)
@@ -168,17 +165,16 @@ def analyseVelSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
             k_nu.append(k_params["k_nu"])
             k_nu_p.append(k_params["k_nu_p"])
             ## note that the spectra data was fitted
-            fit_vel_success.append(vel_filename)
+            vel_sim_times.append( float(vel_filename.split("_")[-3]) / plots_per_eddy )
         ## note that the spectra data could not be fitted
         except: fit_vel_failed.append(vel_filename)
     ## create dictionary of important simulation variables
     args = {
-        "vel_sim_time":vel_sim_time,
+        "vel_sim_times":vel_sim_times,
         "vel_k":vel_k,
         "vel_power":vel_power,
         "fit_vel_k":fit_vel_k,
         "fit_vel_power":fit_vel_power,
-        "fit_vel_success":fit_vel_success,
         "fit_vel_failed":fit_vel_failed,
         "k_nu":k_nu,
         "k_nu_p":k_nu_p
@@ -188,12 +184,11 @@ def analyseVelSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
 
 def analyseMagSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
     ## initialise list of magnetic scales for the simulation
-    mag_sim_time  = [] # simulation time points
+    mag_sim_times  = [] # simulation time points
     mag_k     = [] # spectra k values
     mag_power = [] # power spectra
     fit_mag_k = [] # fitted spectra k values
     fit_mag_power   = [] # fitted power spectra
-    fit_mag_success = [] # spectra files that were fitted
     fit_mag_failed  = [] # spectra files that couldn't be fitted
     k_max     = [] # measured k_max from fitted spectra
     k_eta     = [] # measured k_eta from fitted spectra
@@ -203,8 +198,6 @@ def analyseMagSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
     ## loop over spectra files in domain
     print("\t\t> There are " + str(len(mag_filenames)) + " magnetic spectra files")
     for mag_filename, sub_index in zip(mag_filenames, tqdm(range(len(mag_filenames)), disable=bool_hide_progress)):
-        ## save the simulation time
-        mag_sim_time.append( float(mag_filename.split("_")[-3]) / plots_per_eddy )
         ## load data
         k, power = loadSpectraData(createFilePath([filepath_data, mag_filename]))
         mag_k.append(k)
@@ -220,17 +213,16 @@ def analyseMagSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
             k_eta.append(k_params["k_eta"])
             k_eta_p.append(k_params["k_eta_p"])
             ## note that the spectra data was fitted
-            fit_mag_success.append(mag_filename)
+            mag_sim_times.append( float(mag_filename.split("_")[-3]) / plots_per_eddy )
         ## indicate that spectra could not be fitted
         except: fit_mag_failed.append(mag_filename)
     ## create dictionary of important simulation variables
     args = {
-        "mag_sim_time":mag_sim_time,
+        "mag_sim_times":mag_sim_times,
         "mag_k":mag_k,
         "mag_power":mag_power,
         "fit_mag_k":fit_mag_k,
         "fit_mag_power":fit_mag_power,
-        "fit_mag_success":fit_mag_success,
         "fit_mag_failed":fit_mag_failed,
         "k_max":k_max,
         "k_eta":k_eta,
@@ -242,13 +234,13 @@ def analyseMagSpectra(filepath_data, plots_per_eddy, bool_hide_progress):
 class spectra():
     def __init__(self, sim_label,
                 ## variables from velocity spectra
-                vel_sim_time, vel_k, vel_power, fit_vel_k, fit_vel_power, fit_vel_success, fit_vel_failed, k_nu, k_nu_p,
+                vel_sim_times, vel_k, vel_power, fit_vel_k, fit_vel_power, fit_vel_failed, k_nu, k_nu_p,
                 ## variables from magnetic spectra
-                mag_sim_time, mag_k, mag_power, fit_mag_k, fit_mag_power, fit_mag_success, fit_mag_failed, k_max, k_eta, k_eta_p):
+                mag_sim_times, mag_k, mag_power, fit_mag_k, fit_mag_power, fit_mag_failed, k_max, k_eta, k_eta_p):
         ## simulation information
-        self.sim_label    = sim_label
-        self.vel_sim_time = vel_sim_time
-        self.mag_sim_time = mag_sim_time
+        self.sim_label = sim_label
+        self.vel_sim_times = vel_sim_times
+        self.mag_sim_times = mag_sim_times
         ## simulation data
         self.vel_k     = vel_k
         self.vel_power = vel_power
@@ -259,10 +251,8 @@ class spectra():
         self.fit_vel_power = fit_vel_power
         self.fit_mag_k     = fit_mag_k
         self.fit_mag_power = fit_mag_power
-        ## list of spectra files that could/could not be fitted
-        self.fit_vel_success = fit_vel_success
+        ## list of spectra files that failed to be fitted
         self.fit_vel_failed  = fit_vel_failed
-        self.fit_mag_success = fit_mag_success
         self.fit_mag_failed  = fit_mag_failed
         ## important measured scales
         self.k_nu    = k_nu
@@ -406,12 +396,16 @@ class fitMagneticSpectra():
         self.min_k = root.root
         self.min_power = magModels.low_k_model(self.min_k, *self.low_k_params)
     def fit_full_k_model(self):
-        fit_k = np.linspace(np.min(self.k), np.max(self.k), 10**4)
-        self.find_p0("first_guess")
-        high_k_parms = self.p0[-2:]
-        self.find_root()
-        self.find_p0("last_guess")
-        fit_power = magModels.full_k_model(fit_k, *self.p0)
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            ## this will suppress all warnings in this block
+            fit_k = np.linspace(np.min(self.k), np.max(self.k), 10**4)
+            self.find_p0("first_guess")
+            high_k_parms = self.p0[-2:]
+            self.find_root()
+            self.find_p0("last_guess")
+            fit_power = magModels.full_k_model(fit_k, *self.p0)
+        ## return parameters
         k_params = {"A":self.p0[0],
                     "Kazantsev":self.p0[1],
                     "k_eta_p":1/self.p0[2],
@@ -447,11 +441,11 @@ class fitVelocitySpectra():
     def fit_log_low_k_model(self):
         low_k = self.k[:self.index_k_exp_end]
         low_power = self.power[:self.index_k_exp_end]
-        np.seterr(divide = "ignore")  # ignore devide by zero error when model can"t be fit
-        params, _ = curve_fit(velModels.low_log_k_model, xdata=low_k, ydata=np.log(low_power))
-        np.seterr(divide = "warn")
+        ## ignore divide by zero warning
+        with np.errstate(divide='ignore'): 
+            params, _ = curve_fit(velModels.low_log_k_model, xdata=low_k, ydata=np.log(low_power))
         a0, a1 = params
-        # undo model transformation
+        ## undo model transformation
         a0 = np.exp(a0)
         params = np.array([a0,a1])
         return(params)
@@ -460,7 +454,7 @@ class fitVelocitySpectra():
         high_power = self.power[self.index_low2high_k:]
         params, _ = curve_fit(velModels.high_log_k_model, xdata=high_k, ydata=np.log(high_power))
         a0, a1 = params
-        # undo model transformation
+        ## undo model transformation
         a0 = np.exp(a0)
         params = np.array([a0,a1])
         return(params)
@@ -472,18 +466,24 @@ class fitVelocitySpectra():
         elif method == "last_guess":
             self.p0 = np.concatenate([self.low_k_params,self.high_k_params])
     def find_root(self):
-        a0, a1, a2, a3 = self.p0
-        root = root_scalar(velModels.root_model,args=(a0, a1, a2, a3),bracket=[2,len(self.k)/2])
-        self.min_k = root.root
-        self.min_power = velModels.low_k_model(self.min_k, *self.low_k_params)
+        with warnings.catch_warnings():
+            ## this will suppress all warnings in this block
+            a0, a1, a2, a3 = self.p0
+            root = root_scalar(velModels.root_model,args=(a0, a1, a2, a3),bracket=[2,len(self.k)/2])
+            self.min_k = root.root
+            self.min_power = velModels.low_k_model(self.min_k, *self.low_k_params)
     def fit_full_k_model(self):
-        fit_k = np.linspace(np.min(self.k), np.max(self.k), 10**4)
-        self.find_p0("first_guess")
-        high_k_parms = self.p0[-2:]
-        self.find_root()
-        self.find_p0("last_guess")
-        a0, a1, a2, a3 = self.p0
-        fit_power = velModels.full_k_model(fit_k,a0,a1,self.min_power,self.min_k,-self.p0[-1])
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            ## this will suppress all warnings in this block
+            fit_k = np.linspace(np.min(self.k), np.max(self.k), 10**4)
+            self.find_p0("first_guess")
+            high_k_parms = self.p0[-2:]
+            self.find_root()
+            self.find_p0("last_guess")
+            a0, a1, a2, a3 = self.p0
+            fit_power = velModels.full_k_model(fit_k,a0,a1,self.min_power,self.min_k,-self.p0[-1])
+        ## return parameters
         k_params = {"A":self.p0[0],
                     "k_nu_p":1/self.p0[1],
                     "k_nu":self.min_k,
